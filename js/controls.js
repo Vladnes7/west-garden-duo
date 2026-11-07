@@ -21,7 +21,8 @@ export class Player {
     this.look = { id: null, x: 0, y: 0 };
     this.onInteract = onInteract;
     this.movers = []; this.lastJoyEnd = 0; this.mouse = null; this.hot = false;
-    this.ray = new THREE.Raycaster(); this.ray.far = 3.2;
+    this.ray = new THREE.Raycaster(); this.ray.far = 3.6;
+    this.lastTouch = -1e9; this.lastHit = { t: -1e9, u: null };
     this.orbit = new OrbitControls(camera, dom);
     this.orbit.enabled = false; this.orbit.target.set(3.1, 0, 3.8);
     this.orbit.maxPolarAngle = Math.PI * 0.46; this.orbit.minDistance = 4; this.orbit.maxDistance = 26; this.orbit.enableDamping = true;
@@ -44,23 +45,27 @@ export class Player {
     });
     // desktop drag-to-look fallback (when pointer lock unavailable)
     let drag = null;
-    d.addEventListener('mousedown', (e) => { if (this.mode !== 'walk' || this.locked) return; drag = { x: e.clientX, y: e.clientY, moved: false }; });
-    d.addEventListener('mousemove', (e) => { this.mouse = { x: e.clientX, y: e.clientY }; });
+    // phones send emulated mouse events after every tap: they used to re-toggle what the tap had just opened
+    const fromTouch = () => performance.now() - this.lastTouch < 900;
+    d.addEventListener('mousedown', (e) => { if (this.mode !== 'walk' || this.locked || fromTouch()) return; drag = { x: e.clientX, y: e.clientY, moved: false }; });
+    d.addEventListener('mousemove', (e) => { if (!fromTouch()) this.mouse = { x: e.clientX, y: e.clientY }; });
     d.addEventListener('mouseleave', () => { this.mouse = null; });
     addEventListener('mousemove', (e) => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; this.yaw -= dx * 0.004; this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch - dy * 0.004)); drag.x = e.clientX; drag.y = e.clientY; });
-    addEventListener('mouseup', (e) => { if (drag && !drag.moved && this.mode === 'walk') this.interactAt(e.clientX, e.clientY); drag = null; });
+    addEventListener('mouseup', (e) => { if (drag && !drag.moved && this.mode === 'walk' && !fromTouch()) this.interactAt(e.clientX, e.clientY); drag = null; });
     // overview mode: clicks only rotate/zoom; rooms are chosen with the room buttons
-    d.addEventListener('click', () => { if (this.mode === 'walk' && this.locked) this.interactCenter(); });
+    d.addEventListener('click', () => { if (this.mode === 'walk' && this.locked && !fromTouch()) this.interactCenter(); });
     // touch: left half joystick, right half look; tap = interact
     d.addEventListener('touchstart', (e) => {
+      this.lastTouch = performance.now(); this.mouse = null;
       for (const t of e.changedTouches) {
         if (this.mode !== 'walk') continue;
-        if (t.clientX < innerWidth * 0.45 && t.clientY > innerHeight * 0.3 && this.joy.id === null) {
-          const base = this.joyBase ? this.joyBase() : { x: t.clientX, y: t.clientY };
+        // the joystick grabs only touches on / around its circle; everywhere else is look + tap-to-open
+        const base = this.joyBase ? this.joyBase() : { x: 94, y: innerHeight - 94 };
+        if (this.joy.id === null && Math.hypot(t.clientX - base.x, t.clientY - base.y) < 90) {
           this.joy = { active: true, id: t.identifier, ox: base.x, oy: base.y, x: 0, y: 0 };
           this._joyMove(t.clientX, t.clientY);
         }
-        else if (this.look.id === null) this.look = { id: t.identifier, x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY, t: performance.now(), tap: t.clientX >= innerWidth * 0.45 && !this.joy.active && performance.now() - this.lastJoyEnd > 350 };
+        else if (this.look.id === null) this.look = { id: t.identifier, x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY, t: performance.now(), tap: !this.joy.active && performance.now() - this.lastJoyEnd > 350 };
       }
     }, { passive: true });
     d.addEventListener('touchmove', (e) => {
@@ -70,11 +75,13 @@ export class Player {
       }
     }, { passive: true });
     const end = (e) => {
+      this.lastTouch = performance.now();
       for (const t of e.changedTouches) {
         if (t.identifier === this.joy.id) { this.joy = { active: false, x: 0, y: 0, id: null }; this.lastJoyEnd = performance.now(); this.onJoy && this.onJoy(this.joy); }
         if (t.identifier === this.look.id) {
-          // tap-to-open only on the right (look) side and never while/just after using the joystick
-          if (this.look.tap && !this.joy.active && Math.hypot(t.clientX - this.look.sx, t.clientY - this.look.sy) < 8 && performance.now() - this.look.t < 300) this.interactAt(t.clientX, t.clientY);
+          // tap-to-open anywhere but the joystick, never while/just after using it
+          // (a real finger moves a little and lingers: 16 px / 0.5 s still count as a tap)
+          if (this.look.tap && !this.joy.active && Math.hypot(t.clientX - this.look.sx, t.clientY - this.look.sy) < 16 && performance.now() - this.look.t < 500) this.interactAt(t.clientX, t.clientY);
           this.look = { id: null };
         }
       }
@@ -268,13 +275,24 @@ export class Player {
   pick(cx, cy) {
     const ndc = new THREE.Vector2((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
     this.ray.setFromCamera(ndc, this.camera);
-    const hit = this.ray.intersectObjects(this.targets(), false)[0];
-    const u = hit && hit.object.userData;
-    return u && (u.door || u.mover) ? u : null;
+    // nearest door / leaf / drawer that is not behind a wall (walls are tested in plan, against the collision segments)
+    const o = this.camera.position;
+    for (const hit of this.ray.intersectObjects(this.targets(), false)) {
+      const u = hit.object.userData;
+      if (!(u.door || u.mover)) continue;
+      const dx = hit.point.x - o.x, dz = hit.point.z - o.z, L = Math.hypot(dx, dz);
+      const k = L > 0.06 ? (L - 0.05) / L : 0;
+      if (k && this.segs.some((sg) => crosses(o.x, o.z, o.x + dx * k, o.z + dz * k, sg))) continue;
+      return u;
+    }
+    return null;
   }
   interactAt(cx, cy) {
     const u = this.pick(cx, cy); if (!u) return false;
-    this.onInteract && this.onInteract(u.door || u.mover, !!u.mover);
+    const target = u.door || u.mover, now = performance.now();
+    if (this.lastHit.u === target && now - this.lastHit.t < 450) return true; // one gesture = one toggle
+    this.lastHit = { t: now, u: target };
+    this.onInteract && this.onInteract(target, !!u.mover);
     return true;
   }
   // highlight the crosshair / pointer when aiming at something that opens
@@ -295,3 +313,9 @@ function closest(x, z, s) {
   return [px, pz, Math.hypot(x - px, z - pz)];
 }
 function distSeg(x, z, s) { return closest(x, z, s)[2]; }
+function crosses(ax, az, bx, bz, s) { // does segment a-b cross wall segment s?
+  const [cx, cz, dx, dz] = s;
+  const d1 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax), d2 = (bx - ax) * (dz - az) - (bz - az) * (dx - ax);
+  const d3 = (dx - cx) * (az - cz) - (dz - cz) * (ax - cx), d4 = (dx - cx) * (bz - cz) - (dz - cz) * (bx - cx);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}

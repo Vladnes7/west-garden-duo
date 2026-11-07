@@ -37,6 +37,7 @@ const PROFILE = [
   { tex: 0.35, dpr: 1, shadow: 1024, mirror: 0, smaa: false },
 ][LEVEL];
 globalThis.__wgTexScale = PROFILE.tex;
+globalThis.__wgFreeCanvases = LEVEL > 0;
 const beat = () => LS.set('wgduo-run', String(Date.now()));
 addEventListener('pagehide', () => LS.del('wgduo-run'));
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') LS.del('wgduo-run'); else beat(); });
@@ -259,6 +260,17 @@ async function boot() {
   bakeIn = 3;
 
   setLoad(1, 'Готово'); await frame();
+  // phones: once a mesh is on the GPU its vertex arrays are not needed in page memory, except for what can be clicked
+  if (LEVEL) {
+    const keep = new Set(player.targets());
+    const drop = function () { this.array = null; };
+    scene.traverse((o) => {
+      if (!o.isMesh || keep.has(o) || !o.geometry || !o.geometry.boundingSphere) return;
+      const g = o.geometry;
+      for (const a of Object.values(g.attributes)) a.onUpload(drop);
+      if (g.index) g.index.onUpload(drop);
+    });
+  }
   // warm-up: compile with everything visible so crossing between the flats never stalls on shaders
   for (const a of APTS) a.furn.visible = true;
   renderer.compile(scene, camera);

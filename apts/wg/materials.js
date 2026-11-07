@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import * as T from './textures.js';
+import * as T0 from './textures.js';
+// phones: every generator gets its pixel sizes scaled (args >= 256 px), so no full-size canvas is ever drawn
+const T = new Proxy(T0, { get: (o, k) => (typeof o[k] !== 'function' ? o[k] : (...a) => {
+  const s = globalThis.__wgTexScale || 1;
+  return o[k](...(s < 1 ? a.map((v) => (typeof v === 'number' && v >= 256 ? Math.max(128, Math.round(v * s)) : v)) : a));
+}) });
 import { frame } from './util.js';
 
 export const MAT = {};          // key -> material
@@ -7,19 +12,14 @@ export const TEX = {};          // key -> texture
 let maxAniso = 8;
 
 function tex(c, tileMeters = 1, srgb = true) {
-  // phones: textures are generated at full size, then stored downscaled (4× less memory per halving)
-  const k = globalThis.__wgTexScale || 1;
-  if (k < 1 && c.width > 256) {
-    const d = document.createElement('canvas');
-    d.width = Math.max(128, Math.round(c.width * k)); d.height = Math.max(64, Math.round(c.height * k));
-    d.getContext('2d').drawImage(c, 0, 0, d.width, d.height); c = d;
-  }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(1 / tileMeters, 1 / tileMeters);
   t.anisotropy = maxAniso;
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   t.needsUpdate = true;
+  // phones: once the texture is on the GPU, release the canvas (its pixels would otherwise stay in page memory)
+  if (globalThis.__wgFreeCanvases) t.onUpdate = () => { const im = t.image; t.onUpdate = null; if (im && im.getContext && im.width > 1) { t.image = { width: im.width, height: im.height }; im.width = im.height = 1; } };
   return t;
 }
 

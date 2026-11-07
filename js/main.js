@@ -23,13 +23,39 @@ function pointIn(x, y, poly) {
   return ins;
 }
 
+// ---- device profile. Two furnished flats are heavy: on phones the browser kills the tab when memory runs out
+// and reloads the page (the "back to loading" loop). Phones get a lighter profile; a crash detected on the
+// previous visit makes it lighter still, and a lost WebGL context restarts once in that lighter mode.
+const LS = { get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* */ } }, del: (k) => { try { localStorage.removeItem(k); } catch (e) { /* */ } } };
+const MOBILE = matchMedia('(pointer: coarse)').matches || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+let crashes = +LS.get('wgduo-crashes') || 0;
+{ const run = +LS.get('wgduo-run') || 0; if (run && Date.now() - run < 180000) { crashes++; LS.set('wgduo-crashes', String(crashes)); } }
+const LEVEL = Math.min(2, (MOBILE ? 1 : 0) + Math.min(crashes, 2));
+const PROFILE = [
+  { tex: 1, dpr: 1.5, shadow: 4096, mirror: 512, smaa: true },
+  { tex: 0.5, dpr: 1.25, shadow: 2048, mirror: 128, smaa: true },
+  { tex: 0.35, dpr: 1, shadow: 1024, mirror: 0, smaa: false },
+][LEVEL];
+globalThis.__wgTexScale = PROFILE.tex;
+const beat = () => LS.set('wgduo-run', String(Date.now()));
+addEventListener('pagehide', () => LS.del('wgduo-run'));
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') LS.del('wgduo-run'); else beat(); });
+
 let dprNow = 1;
 async function boot() {
+  beat();
   const canvas = $('#gl');
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    crashes++; LS.set('wgduo-crashes', String(crashes)); LS.del('wgduo-run');
+    $('#load').classList.remove('hidden');
+    if (crashes <= 3) { $('#loadStep').textContent = 'Устройству не хватило памяти — перезапускаю в облегчённом режиме…'; setTimeout(() => location.reload(), 1500); }
+    else $('#loadStep').textContent = 'Устройству не хватает видеопамяти для 3D-модели. Закройте другие вкладки и обновите страницу.';
+  }, false);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-  let quality = 'high';
-  try { quality = localStorage.getItem('wgduo-quality') || 'high'; } catch (e) { /* no storage */ }
-  const dprFor = (q) => Math.min(devicePixelRatio || 1, q === 'high' ? 1.5 : 1);
+  let quality = LS.get('wgduo-quality') || (LEVEL ? 'fast' : 'high');
+  window.__wgQuality0 = quality; window.__wgLevel = LEVEL;
+  const dprFor = (q) => Math.min(devicePixelRatio || 1, q === 'high' ? PROFILE.dpr : 1);
   const DPR = dprFor(quality);
   renderer.setPixelRatio(DPR);
   renderer.setSize(innerWidth, innerHeight);
@@ -105,6 +131,7 @@ async function boot() {
 
   setLoad(0.8, 'Свет…'); await frame();
   const lighting = buildLighting(scene, renderer, APTS);
+  lighting.sun.shadow.mapSize.set(PROFILE.shadow, PROFILE.shadow);
   lighting.setMode('day');
 
   // post-processing: N8AO (ambient occlusion, half-res) → output (tone map) → SMAA
@@ -114,7 +141,7 @@ async function boot() {
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
   let ao = null;
-  try {
+  if (LEVEL === 0) try { // ambient occlusion: desktop only (its buffers cost too much memory on phones)
     const { N8AOPass } = await import('n8ao');
     ao = new N8AOPass(scene, camera, innerWidth, innerHeight);
     Object.assign(ao.configuration, { aoRadius: 0.55, distanceFalloff: 0.45, intensity: 2.4, aoSamples: 12, denoiseSamples: 6, denoiseRadius: 10, halfRes: true, depthAwareUpsampling: true, gammaCorrection: false, color: new THREE.Color('#1a1410') });
@@ -123,7 +150,7 @@ async function boot() {
   const applyQ = (q) => { if (ao) { ao.enabled = q === 'high'; renderPass.enabled = q !== 'high'; } };
   applyQ(quality);
   composer.addPass(new OutputPass());
-  try { const { SMAAPass } = await import('three/addons/postprocessing/SMAAPass.js'); composer.addPass(new SMAAPass(innerWidth * DPR, innerHeight * DPR)); } catch (e) { console.warn('SMAA unavailable', e); }
+  if (PROFILE.smaa) try { const { SMAAPass } = await import('three/addons/postprocessing/SMAAPass.js'); composer.addPass(new SMAAPass(innerWidth * DPR, innerHeight * DPR)); } catch (e) { console.warn('SMAA unavailable', e); }
 
   const player = new Player(camera, canvas, world, (t, isMover) => (isMover ? toggleMover(t) : toggleDoor(t)));
   player.movers = movers;
@@ -206,12 +233,12 @@ async function boot() {
     renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
   });
 
-  window.__setQuality = (q) => { quality = q; try { localStorage.setItem('wgduo-quality', q); } catch (e) { /* */ } applyQ(q); const d = dprFor(q); dprNow = d; renderer.setPixelRatio(d); composer.setPixelRatio(d); composer.setSize(innerWidth, innerHeight); lighting.sun.shadow.mapSize.set(q === 'high' ? 4096 : 2048, q === 'high' ? 4096 : 2048); if (lighting.sun.shadow.map) { lighting.sun.shadow.map.dispose(); lighting.sun.shadow.map = null; } renderer.shadowMap.needsUpdate = true; };
+  window.__setQuality = (q) => { quality = q; LS.set('wgduo-quality', q); applyQ(q); const d = dprFor(q); dprNow = d; renderer.setPixelRatio(d); composer.setPixelRatio(d); composer.setSize(innerWidth, innerHeight); { const sm = q === 'high' ? PROFILE.shadow : Math.min(2048, PROFILE.shadow); lighting.sun.shadow.mapSize.set(sm, sm); } if (lighting.sun.shadow.map) { lighting.sun.shadow.map.dispose(); lighting.sun.shadow.map = null; } renderer.shadowMap.needsUpdate = true; };
 
   // mirrors: static cube reflections baked from a point in front of each mirror (re-baked on light / finish changes)
   const probes = [];
-  for (const a of APTS) for (const [k, x, y, z] of a.mirrors) {
-    const rt = new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType, generateMipmaps: false });
+  if (PROFILE.mirror) for (const a of APTS) for (const [k, x, y, z] of a.mirrors) {
+    const rt = new THREE.WebGLCubeRenderTarget(PROFILE.mirror, { type: THREE.HalfFloatType, generateMipmaps: false });
     const cam = new THREE.CubeCamera(0.05, 40, rt); cam.position.set(x + a.offset[0], y, z + a.offset[1]); scene.add(cam);
     const M = a.M.MAT[k]; M.envMap = rt.texture; M.envMapIntensity = 1; M.needsUpdate = true;
     probes.push({ M, cam, a });
@@ -238,6 +265,10 @@ async function boot() {
   applyVisibility();
   $('#load').classList.add('hidden');
   ui.showStart();
+  if (crashes && LEVEL) toast('Включён облегчённый режим: так модель стабильно работает на этом устройстве');
+  setInterval(beat, 5000);
+  // a long stable session means this profile is fine: forget older crashes (the level stays for this visit)
+  setTimeout(() => { if (crashes) { crashes = Math.max(0, crashes - 1); LS.set('wgduo-crashes', String(crashes)); } }, 240000);
 
   const clock = new THREE.Clock();
   let slowFrames = 0, wasMoving = false, hoverTick = 0; dprNow = DPR;

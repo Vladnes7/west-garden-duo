@@ -7,6 +7,13 @@ export const TEX = {};          // key -> texture
 let maxAniso = 8;
 
 function tex(c, tileMeters = 1, srgb = true) {
+  // phones: textures are generated at full size, then stored downscaled (4× less memory per halving)
+  const k = globalThis.__wgTexScale || 1;
+  if (k < 1 && c.width > 256) {
+    const d = document.createElement('canvas');
+    d.width = Math.max(128, Math.round(c.width * k)); d.height = Math.max(64, Math.round(c.height * k));
+    d.getContext('2d').drawImage(c, 0, 0, d.width, d.height); c = d;
+  }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(1 / tileMeters, 1 / tileMeters);
@@ -20,7 +27,7 @@ const std = (o) => new THREE.MeshStandardMaterial(o);
 const phys = (o) => new THREE.MeshPhysicalMaterial(o);
 
 export async function buildMaterials(renderer, progress) {
-  maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  maxAniso = Math.min(globalThis.__wgTexScale < 1 ? 4 : 8, renderer.capabilities.getMaxAnisotropy());
   const step = async (label) => { progress && progress(label); await frame(); };
 
   await step('Паркет «английская ёлка»');

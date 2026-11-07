@@ -101,7 +101,7 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
   $('#gl').addEventListener('click', () => { if (player.mode === 'walk' && !player.locked && !touch && start.classList.contains('hidden') && !panel.classList.contains('open')) player.lock(); });
 
   const qSeg = $('#qSeg');
-  let q0 = 'high'; try { q0 = localStorage.getItem('wgduo-quality') || 'high'; } catch (e) { /* */ }
+  const q0 = window.__wgQuality0 || 'high';
   for (const b of qSeg.children) { b.classList.toggle('on', b.dataset.q === q0); b.onclick = () => { for (const x of qSeg.children) x.classList.toggle('on', x === b); window.__setQuality && window.__setQuality(b.dataset.q); }; }
   const cross = $('#cross');
   player.onLock = (l) => { cross.style.display = l ? 'block' : 'none'; };

@@ -82,11 +82,19 @@ async function boot() {
   boxes.push(...lobby.collide);
   for (const [k, v] of Object.entries(lobby.views)) views['lobby:' + k] = v;
   const lobbyHit = { apt: null, room: LOBBY_ROOM };
+  // entrance doorways (the wall thickness between a flat and the hall) count as walkable floor
+  const ENTRY_ROOM = { id: 'entry', name: 'Вход' };
+  const entries = APTS.flatMap((a) => a.PL.OPENINGS.filter((o) => o.kind === 'entry').map((o) => {
+    const [ox, oz] = a.offset; const lo = (Math.min(o.a, o.b) + 40) / 1000, hi = (Math.max(o.a, o.b) - 40) / 1000;
+    const r = o.axis === 'y' ? [ox + lo, oz + (o.w0 - 120) / 1000, ox + hi, oz + (o.w1 + 450) / 1000] : [ox + (o.w0 - 120) / 1000, oz + lo, ox + (o.w1 + 450) / 1000, oz + hi];
+    return { r, hit: { apt: a, room: ENTRY_ROOM } };
+  }));
   const world = {
     segs, boxes, doors, views,
     roomAt(x, z) {
       for (const a of APTS) { const r = a.PL.roomAt((x - a.offset[0]) * 1000, (z - a.offset[1]) * 1000); if (r) return { apt: a, room: r }; }
       if (x > HALL.x0 && x < HALL.x1 && z > HALL.z0 && z < HALL.z1) return lobbyHit;
+      for (const e of entries) if (x > e.r[0] && x < e.r[2] && z > e.r[1] && z < e.r[3]) return e.hit;
       return null;
     },
     inOpening(x, z) {

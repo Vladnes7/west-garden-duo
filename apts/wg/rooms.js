@@ -251,12 +251,31 @@ function kitchen(B, W) {
     const c = 5.661, w = 0.6, s = E.sub(c, 0, 0);
     CW.carcass(s.sub(0, 0, -0.02), w, up1, bd - 0.04, 'k_wood', { bottom: false, shelves: [plinth, 0.45, 1.5, 2.1] });
     s.box(w - 0.004, plinth, 0.02, 0, 0, -0.07, 'shadowgap');
-    s.box(w - 0.036, 0.45, 0.5, 0, 1.05, -0.28, 'k_wood'); // filler behind the microwave
     // built-in oven: hollow cavity, drop-down glass door, roast chicken on the tray (as in the 94 m² flat)
     CW.ovenUnit(s, w, 0.452, 0.596, (f, tw, hm, td) => CW.roastBird(f, tw, hm, true, td));
-    s.box(w - 0.01, 0.45, 0.03, 0, 1.05, 0.0, 'appliance'); s.box(w - 0.22, 0.28, 0.002, -0.05, 1.12, 0.016, 'glass_smoke');
-    for (const [y, dx] of [[1.4, 0.21]]) s.cylZ(0.016, 0.02, dx, y, 0.025, 'black', 16);
-    s.box(0.04, 0.016, 0.002, 0.21, 1.46, 0.016, 'led');
+    // built-in microwave: hollow cavity, side-hinged glass door, turntable with a bowl
+    {
+      const y0 = 1.05, mh = 0.448, mw = w - 0.01, D = 0.4, pw = 0.14, dw = mw - pw, m = s.sub(0, y0, 0);
+      m.box(mw, 0.02, D, 0, 0, -D / 2, 'appliance'); m.box(mw, 0.02, D, 0, mh - 0.02, -D / 2, 'appliance');
+      m.box(0.02, mh, D, -mw / 2 + 0.01, 0, -D / 2, 'appliance'); m.box(0.02, mh, D, mw / 2 - 0.01, 0, -D / 2, 'appliance');
+      m.box(mw, mh, 0.01, 0, 0, -D, 'appliance'); m.box(0.012, mh, D, -mw / 2 + dw, 0, -D / 2, 'appliance');
+      const cx = -mw / 2 + dw / 2, cw = dw - 0.04, ch = mh - 0.06, cd = D - 0.05, ci = m.sub(cx, 0.03, -0.02);
+      ci.box(cw, 0.004, cd, 0, 0, -cd / 2, 'fridge_in'); ci.box(cw, 0.004, cd, 0, ch, -cd / 2, 'fridge_in');
+      ci.box(0.004, ch, cd, -cw / 2, 0, -cd / 2, 'fridge_in'); ci.box(0.004, ch, cd, cw / 2, 0, -cd / 2, 'fridge_in'); ci.box(cw, ch, 0.004, 0, 0, -cd, 'fridge_in');
+      ci.cyl(0.13, 0.13, 0.006, 0, 0.012, -cd / 2, 'glass_cup', 40); ci.cyl(0.03, 0.03, 0.012, 0, 0.004, -cd / 2, 'black', 16);
+      CW.bowls(ci, 0, 0.018, -cd / 2, 1, 0.075); ci.sphere(0.045, 0, 0.03, -cd / 2, 'food_rice', 16, 0.45);
+      ci.sphere(0.012, cw / 2 - 0.03, ch - 0.02, -cd + 0.03, 'oven_lamp', 10);
+      // control panel: display, knob, open button
+      m.box(pw, mh, 0.03, mw / 2 - pw / 2, 0, 0.0, 'appliance');
+      m.box(0.07, 0.016, 0.002, mw / 2 - pw / 2, mh - 0.07, 0.031, 'led');
+      m.cylZ(0.022, 0.02, mw / 2 - pw / 2, mh * 0.55, 0.04, 'steel', 20); m.box(0.05, 0.022, 0.012, mw / 2 - pw / 2, 0.06, 0.036, 'steel');
+      CW.hinged(m.sub(cx, 0, 0), dw, 'L', (L) => {
+        const fr = 0.035;
+        L.box(dw - 0.004, fr, 0.025, 0, 0, 0.0125, 'appliance'); L.box(dw - 0.004, fr, 0.025, 0, mh - fr, 0.0125, 'appliance');
+        L.box(fr, mh - 2 * fr, 0.025, -dw / 2 + fr / 2, fr, 0.0125, 'appliance'); L.box(fr, mh - 2 * fr, 0.025, dw / 2 - fr / 2, fr, 0.0125, 'appliance');
+        L.box(dw - 2 * fr, mh - 2 * fr, 0.004, 0, fr, 0.022, 'oven_glass'); L.box(dw - 2 * fr, mh - 2 * fr, 0.004, 0, fr, 0.004, 'oven_glass');
+      }, { angle: 1.6 });
+    }
     CW.drawer(s.sub(0, plinth, 0), w, 0.35 - 0.004, 0.5, (L) => flat(L, w, 0.35, 'k_fluted'), fill('pots', 2), { boxH: 0.24 });
     CW.hinged(s.sub(0, 1.5, 0), w, 'L', (L) => flat(L, w, up1 - 1.5, 'k_fluted'), { angle: 1.5 });
     CW.kitchenRow(s, -w / 2 + 0.03, w / 2 - 0.03, 1.518, -0.3, 'packs', 3); CW.kitchenRow(s, -w / 2 + 0.03, w / 2 - 0.03, 2.118, -0.3, 'jars', 4);
@@ -368,8 +387,22 @@ function hall(B, W) {
     else { H.sphere(0.07, gc - 0.15, y + 0.07, -0.3, 'terra', 16); P.books(H, gc + 0.12, y, -0.3, -0.2); }
   }
   P.COLLIDE.push([2.51, 5.4, 3.09, 6.735]);
-  // ИМ-3: fluted MDF panel on the electrical block (x = 3.09, z 6.735..7.64)
-  W.box(0.02, top, 0.905, 3.1, 0, 7.1875, 'wood_fluted');
+  // ИМ-3: fluted MDF door (x = 3.09, z 6.735..7.64) of a shallow cabinet in the electrical block:
+  // distribution board, router, shelves with storage boxes (niche x 2.79..3.09, z 6.735..7.37)
+  {
+    const n0 = -7.37, n1 = -6.735, nc = (n0 + n1) / 2, nw = n1 - n0;
+    CW.carcass(H.sub(nc, 0, -0.005), nw, top, 0.29, 'wood_dark', { shelves: [0.5, 1.75, 2.2] });
+    const E = H.sub(nc, 0, -0.27);
+    E.box(0.42, 0.55, 0.11, 0, 1.0, 0.055, 'lacquer_white');                 // distribution board (ЩК)
+    E.box(0.38, 0.012, 0.004, 0, 1.38, 0.112, 'shadowgap'); E.box(0.38, 0.012, 0.004, 0, 1.2, 0.112, 'shadowgap');
+    for (let i = 0; i < 9; i++) E.box(0.018, 0.08, 0.02, -0.16 + i * 0.04, 1.24, 0.12, i % 3 ? 'socket' : 'black'); // breakers
+    E.box(0.24, 0.035, 0.16, -0.05, 1.77, 0.09, 'black'); E.box(0.03, 0.006, 0.004, 0.0, 1.785, 0.172, 'led'); // router
+    CW.storeBox(H, n0 + 0.04, 0.52, -0.16, 0.27, 0.22, 0.24, 'box_linen'); CW.storeBox(H, n0 + 0.33, 0.52, -0.16, 0.26, 0.18, 0.24, 'pack1');
+    CW.storeBox(H, n0 + 0.06, 2.22, -0.16, 0.5, 0.2, 0.24, 'box_linen');
+    const dw = 0.905;
+    CW.hinged(H.sub(-7.1875, 0, 0), dw, 'R', (L) => { flat(L, dw, top, 'wood_fluted', 0.02); L.box(0.012, 0.55, 0.014, -(dw / 2 - 0.035), 0.95, 0.027, 'hw'); }, { angle: 1.6 });
+    P.COLLIDE.push([2.79, 6.735, 3.09, 7.37]);
+  }
   // ИМ-2 floating console with drawer + mirror ЗЕРК.1 (2580×860) on the bathroom wall (x = 4.255)
   const C = W.sub(4.255, 0, 7.07, -HP);
   C.box(0.86, 2.58, 0.012, 0, 0.1, 0.006, 'mirror_hall');

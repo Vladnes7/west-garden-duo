@@ -21,7 +21,7 @@ export const WALLS = [
   R(1778, 2350, 5290, 5361),
   R(2350, 3130, 5280, 5400),     // wall above the hall wardrobe niche
   R(2350, 2510, 5400, 6735),     // kitchen | hall wardrobe niche
-  R(2350, 3090, 6735, 7370),     // electrical panels block
+  R(2350, 2790, 6735, 7370),     // electrical panels block (its hall side is a 300 mm cabinet niche behind ИМ-3)
   R(-445, 3090, 7370, 8045),     // south facade (kitchen)
   R(3090, 3140, 7640, 8045),     // entry jamb (entry opening 3140..4220)
   R(4220, 6610, 7640, 8045),

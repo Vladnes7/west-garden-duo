@@ -2,6 +2,7 @@
 // a minimap of the whole floor, start screen, fullscreen, touch layout.
 import * as THREE from 'three';
 import { HALL, LOBBY_ROOM } from './lobby.js';
+import { timeName } from './lighting.js';
 
 const $ = (s) => document.querySelector(s);
 const load = (k) => { try { return JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) { return {}; } };
@@ -78,7 +79,7 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
   $('#resetBtn').onclick = () => { for (const c of pApt.M.CONTROLS) pApt.M.applyOption(c, 0); pApt.state = {}; store(pApt.finishKey, {}); renderPanel(); toast('Отделка как в проекте'); window.__bakeMirrors && window.__bakeMirrors(); };
 
   // ---- walk / overview, time of day
-  const modeSeg = $('#modeSeg'), timeSeg = $('#timeSeg');
+  const modeSeg = $('#modeSeg'), timeR = $('#timeR'), timeLbl = $('#timeLbl');
   for (const b of modeSeg.children) b.onclick = () => { if (b.dataset.m === 'orbit') enterOverview(whereAmI() || ovApt, 'iso'); else player.setMode('walk'); };
   player.onMode = (m) => {
     for (const b of modeSeg.children) b.classList.toggle('on', b.dataset.m === m);
@@ -87,7 +88,11 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
     if (m === 'orbit') { focus = null; syncOverview(); }
   };
   document.body.classList.add('walk');
-  for (const b of timeSeg.children) b.onclick = () => { for (const x of timeSeg.children) x.classList.toggle('on', x === b); lighting.setMode(b.dataset.t); };
+  // time of day: one slider from morning through sunset to night (the lamps come on by themselves)
+  const showTime = () => { timeLbl.textContent = timeName(+timeR.value); };
+  timeR.addEventListener('input', () => { lighting.setTime(+timeR.value); showTime(); });
+  timeR.addEventListener('keydown', (e) => e.stopPropagation()); // arrows move the slider, not the walker
+  showTime();
 
   // ---- start overlay
   const start = $('#start');
@@ -98,7 +103,7 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
   $('#enterBtn').onclick = () => go('lobby:hall');
   for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => go(b.dataset.go);
   $('#overviewBtn').onclick = () => { start.classList.add('hidden'); enterOverview(byId.wg, 'iso'); };
-  $('#gl').addEventListener('click', () => { if (player.mode === 'walk' && !player.locked && !touch && start.classList.contains('hidden') && !panel.classList.contains('open')) player.lock(); });
+  $('#gl').addEventListener('click', () => { if (player.mode === 'walk' && !player.locked && !touch && !document.body.classList.contains('touring') && start.classList.contains('hidden') && !panel.classList.contains('open')) player.lock(); });
 
   const qSeg = $('#qSeg');
   const q0 = window.__wgQuality0 || 'high';
@@ -142,7 +147,12 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
   {
     const b = base.getContext('2d');
     const poly = (pts, dx, dy) => { b.beginPath(); pts.forEach(([x, y], i) => { const [cx, cy] = toC(x + dx, y + dy); i ? b.lineTo(cx, cy) : b.moveTo(cx, cy); }); b.closePath(); };
-    poly(LOBBY_ROOM.poly, 0, 0); b.fillStyle = 'rgba(200,160,100,.22)'; b.fill();
+    // blueprint sheet: a metre grid under the plan, thin white walls
+    b.fillStyle = '#16301f'; b.fillRect(0, 0, base.width, base.height);
+    b.lineWidth = 1;
+    for (let m = -1; m <= 20; m++) { const [gx] = toC(m * 1000, 0); b.strokeStyle = m % 5 === 0 ? 'rgba(195,211,190,.2)' : 'rgba(195,211,190,.08)'; b.beginPath(); b.moveTo(Math.round(gx) + 0.5, 0); b.lineTo(Math.round(gx) + 0.5, base.height); b.stroke(); }
+    for (let m = -1; m <= 14; m++) { const [, gy] = toC(0, m * 1000); b.strokeStyle = m % 5 === 0 ? 'rgba(195,211,190,.2)' : 'rgba(195,211,190,.08)'; b.beginPath(); b.moveTo(0, Math.round(gy) + 0.5); b.lineTo(base.width, Math.round(gy) + 0.5); b.stroke(); }
+    poly(LOBBY_ROOM.poly, 0, 0); b.fillStyle = 'rgba(200,160,100,.2)'; b.fill();
     for (const a of apts) {
       const dx = a.offset[0] * 1000, dy = a.offset[1] * 1000;
       for (const r of a.PL.ROOMS) { poly(r.poly, dx, dy); b.fillStyle = a.mapFill[r.floor] || 'rgba(147,173,141,.24)'; b.fill(); }
@@ -250,6 +260,7 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
 
   // ---- per-frame: labels, minimap, where-am-I
   let curUIRoom = null, last = '';
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   function update() {
     if (player.mode === 'orbit' && lblOn) placeLabels();
     ctx.clearRect(0, 0, mc.width, mc.height);
@@ -259,16 +270,37 @@ export function initUI({ player, lighting, camera, apts, world, onModeChange, on
       const p = player.pos;
       const [cx, cy] = toC(p.x * 1000, p.z * 1000);
       const ang = Math.atan2(-Math.cos(player.yaw), -Math.sin(player.yaw));
-      ctx.fillStyle = 'rgba(195,211,190,.3)';
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, 26, ang - 0.55, ang + 0.55); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#93ad8d'; ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      // "you are here": a view cone and a softly pulsing glow, like a lamp on the drawing
+      const cone = ctx.createRadialGradient(cx, cy, 2, cx, cy, 34); cone.addColorStop(0, 'rgba(255,226,170,.5)'); cone.addColorStop(1, 'rgba(255,226,170,0)');
+      ctx.fillStyle = cone; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, 34, ang - 0.55, ang + 0.55); ctx.closePath(); ctx.fill();
+      const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(performance.now() / 420);
+      const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 13 + pulse * 5); glow.addColorStop(0, 'rgba(255,214,140,.75)'); glow.addColorStop(1, 'rgba(255,214,140,0)');
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, 18, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffe6b0'; ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
       const h = world.roomAt(p.x, p.z);
       if (h) { label = h.apt ? `${h.apt.short} · ${h.room.name}` : h.room.name; curUIRoom = h.apt ? { apt: h.apt, id: h.apt.PL.UI_ROOM[h.room.id] } : null; }
     } else label = `Обзор · ${ovApt.name}`;
     if (label && label !== last) { last = label; $('#roomName').textContent = label; $('#mapRoom').textContent = label; }
   }
-  return { update, toast, showStart: () => start.classList.remove('hidden') };
+  // ---- guided tour and music
+  function bindTour(tour, audio) {
+    const tb = $('#tourBtn'), txt = $('#tourTxt'), sb = $('#sndBtn');
+    const begin = () => { start.classList.add('hidden'); openPanel(false); tour.start(); };
+    tb.onclick = () => (tour.on ? tour.stop() : begin());
+    $('#tourStart').onclick = begin;
+    tour.onChange = (on, finished) => {
+      txt.textContent = on ? 'Стоп' : 'Тур'; tb.firstElementChild.textContent = on ? '■' : '▶';
+      if (!on && finished) toast('Тур окончен. Дальше можно гулять самому');
+      if (!on && !finished && player.mode === 'walk' && !touch) toast('Тур остановлен: управление у вас');
+    };
+    audio.onChange = (on) => sb.setAttribute('aria-pressed', String(on));
+    sb.onclick = (e) => { e.stopPropagation(); audio.toggle(); };
+    const joy0 = player.onJoy; player.onJoy = (j) => { if (j.active && tour.on) tour.stop(); joy0(j); };
+    $('#helpBtn').addEventListener('click', () => tour.stop());
+    for (const b of modeSeg.children) b.addEventListener('click', () => tour.stop(), true);
+  }
+  return { update, toast, showStart: () => start.classList.remove('hidden'), enterOverview, bindTour };
 }
 
 let tt;

@@ -11,6 +11,8 @@ import { buildLobby, LOBBY_PRISMS, LOBBY_ROOM, HALL } from './lobby.js';
 import { buildLighting } from './lighting.js';
 import { Player } from './controls.js';
 import { initUI, toast } from './ui.js';
+import { createTour } from './tour.js';
+import { createAudio } from './audio.js';
 import { frame } from '../apts/wg/util.js';
 
 const $ = (s) => document.querySelector(s);
@@ -133,7 +135,7 @@ async function boot() {
   setLoad(0.8, 'Свет…'); await frame();
   const lighting = buildLighting(scene, renderer, APTS);
   lighting.sun.shadow.mapSize.set(PROFILE.shadow, PROFILE.shadow);
-  lighting.setMode('day');
+  lighting.setTime(0.33);
 
   // post-processing: N8AO (ambient occlusion, half-res) → output (tone map) → SMAA
   renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;
@@ -148,9 +150,28 @@ async function boot() {
     Object.assign(ao.configuration, { aoRadius: 0.55, distanceFalloff: 0.45, intensity: 2.4, aoSamples: 12, denoiseSamples: 6, denoiseRadius: 10, halfRes: true, depthAwareUpsampling: true, gammaCorrection: false, color: new THREE.Color('#1a1410') });
     composer.addPass(ao);
   } catch (e) { console.warn('AO unavailable', e); }
-  const applyQ = (q) => { if (ao) { ao.enabled = q === 'high'; renderPass.enabled = q !== 'high'; } };
-  applyQ(quality);
+  let applyQ = () => {};
+  // glow of the windows and lamps (desktop only), then tone mapping, then a soft vignette with a warm grade
+  let bloom = null, grade = null;
+  if (LEVEL === 0) try {
+    const { UnrealBloomPass } = await import('three/addons/postprocessing/UnrealBloomPass.js');
+    bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.28, 0.6, 1.12);
+    composer.addPass(bloom);
+  } catch (e) { console.warn('bloom unavailable', e); }
   composer.addPass(new OutputPass());
+  if (LEVEL === 0) try {
+    const { ShaderPass } = await import('three/addons/postprocessing/ShaderPass.js');
+    grade = new ShaderPass({
+      uniforms: { tDiffuse: { value: null }, amount: { value: 0.34 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform sampler2D tDiffuse; uniform float amount; varying vec2 vUv;
+        void main() { vec4 c = texture2D(tDiffuse, vUv); vec2 d = vUv - 0.5; float v = smoothstep(0.25, 0.95, dot(d, d) * 2.0);
+          c.rgb *= 1.0 - amount * v; c.rgb = mix(c.rgb, c.rgb * c.rgb * (3.0 - 2.0 * c.rgb), 0.18); gl_FragColor = c; }`,
+    });
+    composer.addPass(grade);
+  } catch (e) { console.warn('grade unavailable', e); }
+  applyQ = (q) => { const hi = q === 'high'; if (ao) { ao.enabled = hi; renderPass.enabled = !hi; } if (bloom) bloom.enabled = hi; if (grade) grade.enabled = hi; };
+  applyQ(quality);
   if (PROFILE.smaa) try { const { SMAAPass } = await import('three/addons/postprocessing/SMAAPass.js'); composer.addPass(new SMAAPass(innerWidth * DPR, innerHeight * DPR)); } catch (e) { console.warn('SMAA unavailable', e); }
 
   const player = new Player(camera, canvas, world, (t, isMover) => (isMover ? toggleMover(t) : toggleDoor(t)));
@@ -221,13 +242,18 @@ async function boot() {
       for (const d of doors) if (d.o && d.o.kind === 'entry') {
         if (inOrbit) { d.walkTarget = d.target; d.target = 0; } else if (d.walkTarget !== undefined) d.target = d.walkTarget;
       }
-      scene.background.set(inOrbit ? '#dcd8cf' : '#cfd9e3');
+      lighting.setOrbit(inOrbit);
+      if (grade) grade.uniforms.amount.value = inOrbit ? 0.12 : 0.34;
       applyVisibility(); applyCut();
     },
     onOverviewApt: (a) => { ovApt = a; applyVisibility(); applyCut(); },
     onCut: (h) => { cutH = h; applyCut(); },
     cutH, FULL,
   });
+
+  const audio = createAudio();
+  const tour = createTour({ player, world, apts: APTS, doors, ui, audio, camera });
+  ui.bindTour(tour, audio);
 
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
@@ -256,7 +282,7 @@ async function boot() {
     cutPlane.constant = c; caps.visible = cv;
   };
   window.__bakeMirrors = () => { bakeIn = 3; };
-  const setModeRaw = lighting.setMode; lighting.setMode = (m) => { setModeRaw(m); bakeIn = 3; };
+  const setTimeRaw = lighting.setTime; lighting.setTime = (t) => { setTimeRaw(t); bakeIn = 8; }; // re-bake once the slider rests
   bakeIn = 3;
 
   setLoad(1, 'Готово'); await frame();
@@ -310,13 +336,15 @@ async function boot() {
     }
     wasMoving = moving;
     player.update(dt);
+    tour.update(dt);
+    lighting.tick(dt);
     ui.update();
     composer.render();
     // adaptive resolution if the GPU struggles
     if (dt > 0.034) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
     if (slowFrames > 120 && dprNow > 0.75) { dprNow -= 0.15; renderer.setPixelRatio(dprNow); composer.setPixelRatio(dprNow); composer.setSize(innerWidth, innerHeight); slowFrames = 0; }
   });
-  window.__app = { scene, camera, player, lighting, renderer, composer, ao, APTS, lobby, world, ui };
+  window.__app = { scene, camera, player, lighting, renderer, composer, ao, bloom, APTS, lobby, world, ui, tour, audio };
 }
 
 boot().catch((e) => { console.error(e); $('#loadStep').textContent = 'Ошибка: ' + e.message; });
